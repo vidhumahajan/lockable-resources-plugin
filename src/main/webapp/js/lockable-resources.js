@@ -1538,6 +1538,10 @@ function initColumnVisibility(config) {
       html += "<td>Label</td>";
       html += "<td><a class=\"jenkins-table__link model-link\" href=\"" + rootUrl + "/label/" + encodeURIComponent(item.request) + "\">" + escapeHtml(item.request) + "</a></td>";
       html += "<td>" + escapeHtml(item.reason) + "</td>";
+    } else if (item.type === "candidates") {
+      html += "<td>Candidates</td>";
+      html += "<td>" + escapeHtml(item.request || "") + "</td>";
+      html += "<td>" + escapeHtml(item.reason || "") + "</td>";
     } else if (item.type === "remote") {
       html += "<td>Remote API</td>";
       html += "<td>" + escapeHtml(item.request || "") + "</td>";
@@ -1595,6 +1599,8 @@ function initColumnVisibility(config) {
     var params = new URLSearchParams();
     params.set("page", currentPage);
     params.set("size", pageSize);
+    // on a resource detail page the table lists only the entries waiting for that resource
+    if (queueTable.dataset.resource) params.set("resource", queueTable.dataset.resource);
 
     var typeInput = document.getElementById("lr-queue-filter-type");
     var requestInput = document.getElementById("lr-queue-filter-request");
@@ -1612,9 +1618,11 @@ function initColumnVisibility(config) {
         return rsp.json();
       })
       .then(function (data) {
+        var totalEl = document.getElementById("lr-queue-total");
+        if (totalEl) totalEl.textContent = data.total;
         // Status/warning
         if (data.total === 0) {
-          statusEl.innerHTML = "<p>The queue is currently empty.</p>";
+          statusEl.innerHTML = "<p>" + escapeHtml(queueTable.dataset.emptyText || "The queue is currently empty.") + "</p>";
           tbody.innerHTML = "";
         } else {
           if (data.warningCount) {
