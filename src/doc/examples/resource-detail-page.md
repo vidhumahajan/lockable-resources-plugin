@@ -18,9 +18,11 @@ The page shows:
 - **Reason**: the lock or reservation reason.
 - **Details**: group, description, labels, properties and the note.
 - **Waiting in queue**: the builds waiting for this resource, in the order they will
-  get it. Builds that ask for it by name are listed, and so are builds that ask for one
-  of its labels or for any resource in its group. Requests that pick resources with a
-  Groovy script are not listed, because the page would have to run the script to know.
+  get it. This is the queue table of the main page, limited to this resource: it is
+  paged on the server and can be filtered and have columns hidden. Builds that ask for
+  the resource by name, in a `candidates` list, by one of its labels or for any
+  resource in its group are listed. Requests that pick resources with a Groovy script
+  are not listed, because the page would have to run the script to know.
 
 ## Actions
 

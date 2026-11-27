@@ -1,6 +1,8 @@
 package org.jenkins.plugins.lockableresources.actions;
 
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.endsWith;
 import static org.hamcrest.Matchers.is;
@@ -11,8 +13,10 @@ import static org.hamcrest.Matchers.startsWith;
 
 import hudson.model.Result;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.List;
 import jenkins.model.Jenkins;
+import net.sf.json.JSONObject;
 import org.htmlunit.HttpMethod;
 import org.htmlunit.Page;
 import org.htmlunit.WebRequest;
@@ -88,7 +92,11 @@ class LockableResourceDetailPageTest {
         assertThat(text, containsString("Laser printer"));
         assertThat(text, containsString("floor2"));
         assertThat(text, containsString("Toner replaced"));
-        assertThat(text, containsString("No build is waiting for this resource."));
+        // the queue is filled in by the shared queue table, see queuePage()
+        assertThat(
+                ((DomElement) page.querySelector("#lockable-resources-queue")).getAttribute("data-resource"),
+                is("printer-1"));
+        assertThat(queuePage("reader", "printer-1").getInt("total"), is(0));
     }
 
     @Test
@@ -129,17 +137,13 @@ class LockableResourceDetailPageTest {
         HtmlPage page = as("reader").goTo("lockable-resources/resource/printer-1/");
         assertThat(page.querySelector(".lr-resource-detail__status").getTextContent(), is("Locked"));
         assertThat(page.getAnchorByText(held.getFullDisplayName()), notNullValue());
-        String queue = page.getElementById("lr-resource-queue").asNormalizedText();
-        assertThat(queue, containsString("Waiting in queue (2)"));
-        assertThat(queue, containsString(nameWaiter.getFullDisplayName()));
-        assertThat(queue, containsString(labelWaiter.getFullDisplayName()));
+        JSONObject queue = queuePage("reader", "printer-1");
+        assertThat(queue.getInt("total"), is(2));
+        assertThat(
+                queuedBy(queue), containsInAnyOrder(nameWaiter.getFullDisplayName(), labelWaiter.getFullDisplayName()));
 
         // neither waiter can use the scanner
-        String scanner = as("reader")
-                .goTo("lockable-resources/resource/scanner-1/")
-                .getElementById("lr-resource-queue")
-                .asNormalizedText();
-        assertThat(scanner, containsString("Waiting in queue (0)"));
+        assertThat(queuePage("reader", "scanner-1").getInt("total"), is(0));
 
         // the resource is routable now, but the build behind it still checks its own permissions:
         // "reader" has Lockable Resources/View but no Item/Read on the job
@@ -156,6 +160,71 @@ class LockableResourceDetailPageTest {
         j.assertBuildStatus(Result.SUCCESS, j.waitForCompletion(held));
         j.assertBuildStatus(Result.SUCCESS, j.waitForCompletion(nameWaiter));
         j.assertBuildStatus(Result.SUCCESS, j.waitForCompletion(labelWaiter));
+    }
+
+    @Test
+    @Issue("1107")
+    void queueListsCandidateRequests() throws Exception {
+        LockableResourcesManager lrm = LockableResourcesManager.get();
+        // declared, not ephemeral: an ephemeral resource is deleted on release and the waiter would never proceed
+        lrm.createResourceWithLabel("cand-1", "card");
+        lrm.createResourceWithLabel("cand-2", "card");
+        lrm.createResourceWithLabel("other-1", "card");
+
+        WorkflowJob holder = j.createProject(WorkflowJob.class, "holder");
+        holder.setDefinition(new CpsFlowDefinition("""
+                lock(resource: 'cand-1') {
+                  lock(resource: 'cand-2') { semaphore 'hold' }
+                }
+                """, true));
+        WorkflowRun held = holder.scheduleBuild2(0).waitForStart();
+        SemaphoreStep.waitForStart("hold/1", held);
+
+        WorkflowJob byCandidates = j.createProject(WorkflowJob.class, "by-candidates");
+        byCandidates.setDefinition(
+                new CpsFlowDefinition("lock(candidates: ['cand-1', 'cand-2'], quantity: 1) { echo 'got it' }", true));
+        WorkflowRun waiter = byCandidates.scheduleBuild2(0).waitForStart();
+        j.waitForMessage("is not free, waiting for execution", waiter);
+
+        JSONObject queue = queuePage("reader", "cand-2");
+        assertThat(queue.getInt("total"), is(1));
+        JSONObject item = queue.getJSONArray("items").getJSONObject(0);
+        assertThat(item.getString("type"), is("candidates"));
+        assertThat(item.getString("request"), is("cand-1, cand-2"));
+        assertThat(queuedBy(queue), contains(waiter.getFullDisplayName()));
+        assertThat(queuePage("reader", "other-1").getInt("total"), is(0));
+        // the main queue shows the same entry
+        assertThat(queuePage("reader", null).getInt("total"), is(1));
+
+        SemaphoreStep.success("hold/1", null);
+        j.assertBuildStatus(Result.SUCCESS, j.waitForCompletion(held));
+        j.assertBuildStatus(Result.SUCCESS, j.waitForCompletion(waiter));
+    }
+
+    @Test
+    void queuePageOfUnknownResourceIsNotFound() throws Exception {
+        JenkinsRule.WebClient wc = as("reader");
+        wc.setThrowExceptionOnFailingStatusCode(false);
+        WebRequest post = new WebRequest(
+                new URL(j.getURL(), "lockable-resources/getQueuePage?resource=no-such-resource"), HttpMethod.POST);
+        wc.addCrumb(post);
+        assertThat(wc.getPage(post).getWebResponse().getStatusCode(), is(404));
+    }
+
+    /** What the queue table on the page loads: the entries waiting for {@code resource}, or all if it is null. */
+    private JSONObject queuePage(String user, String resource) throws Exception {
+        JenkinsRule.WebClient wc = as(user);
+        String query = resource == null ? "" : "?resource=" + resource;
+        WebRequest post =
+                new WebRequest(new URL(j.getURL(), "lockable-resources/getQueuePage" + query), HttpMethod.POST);
+        wc.addCrumb(post);
+        return JSONObject.fromObject(wc.getPage(post).getWebResponse().getContentAsString());
+    }
+
+    private static List<String> queuedBy(JSONObject queue) {
+        List<String> names = new ArrayList<>();
+        queue.getJSONArray("items").forEach(i -> names.add(((JSONObject) i).getString("requestedBy")));
+        return names;
     }
 
     @Test

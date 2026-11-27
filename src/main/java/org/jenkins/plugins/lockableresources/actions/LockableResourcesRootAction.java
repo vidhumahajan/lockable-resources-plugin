@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -547,17 +548,6 @@ public class LockableResourcesRootAction implements RootAction {
     }
 
     // ---------------------------------------------------------------------------
-    /** Queue entries that wait for {@code resource}, in the order they will be promoted. */
-    @Restricted(NoExternalUse.class) // used by LockableResource/index.jelly
-    public List<Queue.QueueStruct> getQueueFor(@NonNull final LockableResource resource)
-            throws Descriptor.FormException {
-        Jenkins.get().checkPermission(VIEW);
-        return getQueue().getAll().stream()
-                .filter(entry -> entry.isWaitingFor(resource))
-                .collect(Collectors.toList());
-    }
-
-    // ---------------------------------------------------------------------------
     /** Since when {@code resource} is reserved or locked, locally or remotely; {@code null} if unknown or free. */
     @CheckForNull
     @Restricted(NoExternalUse.class) // used by LockableResource/index.jelly
@@ -1012,6 +1002,19 @@ public class LockableResourcesRootAction implements RootAction {
             }
 
             // -----------------------------------------------------------------------
+            /** Names this entry picks from ({@code lock(candidates: ...)}), empty if it has none. */
+            @NonNull
+            @Restricted(NoExternalUse.class)
+            public List<String> getCandidateNames() {
+                return this.sources.stream()
+                        .map(LockableResourcesStruct::getCandidates)
+                        .filter(Objects::nonNull)
+                        .flatMap(List::stream)
+                        .distinct()
+                        .collect(Collectors.toList());
+            }
+
+            // -----------------------------------------------------------------------
             @Restricted(NoExternalUse.class) // used by jelly
             public boolean scriptMatch() {
                 return (groovyScript != null && !groovyScript.isEmpty());
@@ -1020,8 +1023,9 @@ public class LockableResourcesRootAction implements RootAction {
             // -----------------------------------------------------------------------
             /**
              * Whether this entry can be satisfied by {@code resource}: it names the resource, or asks for
-             * its group or a label it carries. Uses the same group rule as the allocator. Entries selecting
-             * resources by Groovy script are not evaluated here, as that would run the script on page render.
+             * its group, a label it carries or lists it as a candidate. Uses the same group rule as the
+             * allocator. Entries selecting resources by Groovy script are not evaluated here, as that would run
+             * the script on page render.
              */
             @Restricted(NoExternalUse.class)
             public boolean isWaitingFor(@NonNull final LockableResource resource) {
@@ -1030,6 +1034,10 @@ public class LockableResourcesRootAction implements RootAction {
                         continue;
                     }
                     if (struct.isResourceRequired(resource) || struct.isGroupOnly()) {
+                        return true;
+                    }
+                    List<String> candidates = struct.getCandidates();
+                    if (candidates != null && candidates.contains(resource.getName())) {
                         return true;
                     }
                     if (struct.label != null && !struct.label.isBlank() && resource.isValidLabel(struct.label)) {
@@ -1436,6 +1444,13 @@ public class LockableResourcesRootAction implements RootAction {
         String typeFilter = Util.fixEmptyAndTrim(req.getParameter("type"));
         String requestFilter = Util.fixEmptyAndTrim(req.getParameter("request"));
         String requestedByFilter = Util.fixEmptyAndTrim(req.getParameter("requestedBy"));
+        // the resource detail page lists only the entries that wait for its resource
+        String resourceName = Util.fixEmptyAndTrim(req.getParameter("resource"));
+        final LockableResource resourceFilter = resourceName == null ? null : getResource(resourceName);
+        if (resourceName != null && resourceFilter == null) {
+            rsp.sendError(404);
+            return;
+        }
 
         try {
             String pageParam = req.getParameter("page");
@@ -1457,7 +1472,11 @@ public class LockableResourcesRootAction implements RootAction {
         }
 
         List<Queue.QueueStruct> allItems = queue.getAll();
-
+        if (resourceFilter != null) {
+            allItems = allItems.stream()
+                    .filter(item -> item.isWaitingFor(resourceFilter))
+                    .collect(Collectors.toList());
+        }
         // Apply filter if provided
         if (filter != null || typeFilter != null || requestFilter != null || requestedByFilter != null) {
             final String lowerFilter = filter != null ? filter.toLowerCase(Locale.ENGLISH) : null;
@@ -1558,6 +1577,10 @@ public class LockableResourcesRootAction implements RootAction {
                 obj.put("type", "remote");
                 obj.put("request", item.getRemoteRequest());
                 obj.put("reason", item.getRemoteReason());
+            } else if (!item.getCandidateNames().isEmpty()) {
+                obj.put("type", "candidates");
+                obj.put("request", String.join(", ", item.getCandidateNames()));
+                obj.put("reason", item.getRequiredNumber() + " required");
             } else if (item.resourcesMatch()) {
                 obj.put("type", "resources");
                 net.sf.json.JSONArray resources = new net.sf.json.JSONArray();
@@ -1601,6 +1624,9 @@ public class LockableResourcesRootAction implements RootAction {
         if (item.isRemote()) {
             return "remote";
         }
+        if (!item.getCandidateNames().isEmpty()) {
+            return "candidates";
+        }
         if (item.resourcesMatch()) {
             return "resources";
         }
@@ -1613,6 +1639,9 @@ public class LockableResourcesRootAction implements RootAction {
     private String getQueueItemRequestText(final Queue.QueueStruct item) {
         if (item.isRemote()) {
             return item.getRemoteRequest();
+        }
+        if (!item.getCandidateNames().isEmpty()) {
+            return String.join(", ", item.getCandidateNames());
         }
         if (item.resourcesMatch()) {
             return item.getRequiredResources().stream()

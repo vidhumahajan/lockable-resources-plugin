@@ -40,6 +40,8 @@ THE SOFTWARE.
       id="lockable-resources-queue"
       data-queue-url="${rootURL}/lockable-resources/getQueuePage"
       data-root-url="${rootURL}"
+      data-resource="${queueResource}"
+      data-empty-text="${queueEmptyText}"
     >
       <l:hasPermission permission="${it.QUEUE}">
         <span id="lr-queue-has-permission" style="display:none"/>

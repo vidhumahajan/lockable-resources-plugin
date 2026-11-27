@@ -33,7 +33,8 @@
 
     <!-- ****************************************************************** Status -->
     <j:set var="heldSince" value="${action.getHeldSince(it)}"/>
-    <section class="lr-resource-detail__section">
+    <div class="lr-resource-detail__grid">
+    <section class="lr-resource-detail__card">
       <h2 class="jenkins-section__title">${%section.status}</h2>
       <dl class="lr-resource-detail__list">
         <dt>${%field.status}</dt>
@@ -116,7 +117,7 @@
     </section>
 
     <!-- ****************************************************************** Details -->
-    <section class="lr-resource-detail__section">
+    <section class="lr-resource-detail__card">
       <h2 class="jenkins-section__title">${%section.details}</h2>
       <dl class="lr-resource-detail__list">
         <dt>${%field.group}</dt>
@@ -172,66 +173,35 @@
         </dd>
       </dl>
     </section>
+    </div>
 
     <!-- ****************************************************************** Queue -->
-    <j:set var="queueEntries" value="${action.getQueueFor(it)}"/>
-    <section class="lr-resource-detail__section" id="lr-resource-queue">
-      <h2 class="jenkins-section__title">${%section.queue(queueEntries.size())}</h2>
-      <j:choose>
-        <j:when test="${queueEntries.isEmpty()}">
-          <p class="jenkins-!-color-secondary">${%queue.empty}</p>
-        </j:when>
-        <j:otherwise>
-          <table class="jenkins-table jenkins-table--small">
-            <thead>
-              <tr>
-                <th>${%queue.column.order}</th>
-                <th>${%queue.column.requestedBy}</th>
-                <th>${%queue.column.request}</th>
-                <th>${%queue.column.queuedAt}</th>
-                <th>${%queue.column.priority}</th>
-              </tr>
-            </thead>
-            <tbody>
-              <j:forEach var="entry" items="${queueEntries}" varStatus="idx">
-                <tr>
-                  <td>${idx.index + 1}</td>
-                  <td>
-                    <j:choose>
-                      <j:when test="${!entry.requestedByUrl.isEmpty()}">
-                        <a href="${rootURL}/${entry.requestedByUrl}">${entry.requestedBy}</a>
-                      </j:when>
-                      <j:otherwise>${entry.requestedBy}</j:otherwise>
-                    </j:choose>
-                  </td>
-                  <td>
-                    <j:choose>
-                      <j:when test="${entry.remote}">${entry.remoteRequest}</j:when>
-                      <j:when test="${entry.resourcesMatch()}">
-                        ${%queue.request.resources}
-                        <j:forEach var="required" items="${entry.requiredResources}" varStatus="r">
-                          <j:if test="${!r.first}">, </j:if>
-                          <a href="${baseUrl}resource/${action.encodePathSegment(required.name)}/">${required.name}</a>
-                        </j:forEach>
-                      </j:when>
-                      <j:when test="${entry.labelsMatch()}">
-                        ${%queue.request.label(entry.requiredLabel)}
-                      </j:when>
-                      <j:otherwise>${%queue.request.group}</j:otherwise>
-                    </j:choose>
-                  </td>
-                  <td>
-                    <j:if test="${entry.queuedAt gt 0}">
-                      ${%ago(h.getTimeSpanString(entry.queuedTimestamp))}
-                    </j:if>
-                  </td>
-                  <td>${entry.priority}</td>
-                </tr>
-              </j:forEach>
-            </tbody>
-          </table>
-        </j:otherwise>
-      </j:choose>
+    <!-- Same server-side paged table as the Queue tab of the main page, limited to this resource -->
+    <section class="lr-resource-detail__card lr-resource-detail__card--queue">
+      <h2 class="jenkins-section__title">${%section.queue} <span class="lr-table-count" id="lr-queue-total">…</span></h2>
+      <div class="lr-tab-pane lr-tab-pane--active" id="lr-tab-queue">
+        <div class="lr-toolbar">
+          <div class="lr-toolbar__filters">
+            <input type="text" class="jenkins-input lr-queue-filter" id="lr-queue-filter-type" placeholder="${%filter.queue.type}" />
+            <input type="text" class="jenkins-input lr-queue-filter" id="lr-queue-filter-request" placeholder="${%filter.queue.request}" />
+            <input type="text" class="jenkins-input lr-queue-filter" id="lr-queue-filter-requested-by" placeholder="${%filter.queue.requestedBy}" />
+          </div>
+          <div class="lr-toolbar__actions">
+            <button class="jenkins-button jenkins-button--tertiary lr-reset-filters-btn" tooltip="${%filter.reset.tooltip}">
+              <l:icon src="symbol-close-circle-outline plugin-ionicons-api" />
+            </button>
+            <div class="lr-col-visibility-wrapper">
+              <button id="lr-queue-col-visibility-toggle" class="jenkins-button jenkins-button--tertiary" tooltip="${%filter.columns.tooltip}">
+                <l:icon src="symbol-eye-outline plugin-ionicons-api" />
+              </button>
+              <div id="lr-queue-col-visibility-menu" class="lr-col-visibility-menu" style="display:none;"></div>
+            </div>
+          </div>
+        </div>
+        <j:set var="queueResource" value="${it.name}"/>
+        <j:set var="queueEmptyText" value="${%queue.empty}"/>
+        <st:include page="tableQueue/table" it="${action}"/>
+      </div>
       <p class="jenkins-!-color-secondary lr-resource-detail__hint">${%queue.scriptHint}</p>
     </section>
   </div>
